@@ -28,6 +28,7 @@ mod fxc_child;
 #[cfg(target_os = "macos")]
 #[doc(hidden)]
 pub mod iosurface;
+mod passes;
 #[cfg(target_os = "macos")]
 #[doc(hidden)]
 pub use core_text_glyphs::core_text_glyph;
@@ -53,6 +54,7 @@ mod surface;
 #[cfg(target_os = "macos")]
 mod trial_energy;
 mod upload;
+pub use passes::check as check_layer_inputs;
 pub mod viewport;
 pub use compile::warm_fill_shader;
 pub use font_cache::set_desktop_sans_serif;
@@ -4133,6 +4135,9 @@ pub struct GpuRenderer {
     fill_shaders: FxHashMap<u64, Arc<zgx::decoration::FillShader>>,
     /// Layer shaders' pipelines by shader id (`None`: it failed to compile).
     filter_pipelines: FxHashMap<u64, compile::Compiled<wgpu::RenderPipeline>>,
+    /// Layer shaders' textures, passes and bindings, for those with inputs
+    /// (`FillShader::with_inputs`), by shader id.
+    chains: FxHashMap<u64, passes::Chain>,
     /// Their shaders, to tell when no scene holds one any more (`trim`).
     filter_shaders: FxHashMap<u64, Arc<zgx::decoration::FillShader>>,
     /// Blended layers' pipelines (blend.wgsl): `BLEND_PLAIN`'s, and each
@@ -4714,6 +4719,7 @@ impl GpuRenderer {
             fill_shaders_declared: 0,
             layers_declared: 0,
             filter_pipelines: FxHashMap::default(),
+            chains: FxHashMap::default(),
             blend_pipelines: FxHashMap::default(),
             blend_layouts: std::cell::OnceCell::new(),
             backdrops: FxHashMap::default(),
@@ -6193,6 +6199,7 @@ impl GpuRenderer {
         let layout = match layout {
             AppLayout::Quads => dx12_fill::Layout::Quads,
             AppLayout::Blend => dx12_fill::Layout::Blend,
+            AppLayout::Inputs { blend, textures } => dx12_fill::Layout::Inputs { blend, textures },
         };
         // A shader naga can't write as HLSL is wgpu's to report.
         let Ok((hlsl, name)) = dx12_fill::fragment_hlsl(source, entry, layout) else {
@@ -6317,8 +6324,20 @@ impl GpuRenderer {
         }
         let apps = shader.source() != zgx::decoration::color_filter_shader().source();
         if !self.filter_pipelines.contains_key(&shader.id()) {
-            let (device, layout) = (self.device.clone(), self.context.inner.quad_layout.clone());
-            let source = filter_source(shader.source());
+            let device = self.device.clone();
+            let (layout, source) = match shader.inputs() {
+                Some(inputs) => self.chain(shader.id(), inputs).quads_layout(shader),
+                None => (
+                    self.context.inner.quad_layout.clone(),
+                    filter_source(shader.source()),
+                ),
+            };
+            let app_layout = shader
+                .inputs()
+                .map_or(AppLayout::Quads, |inputs| AppLayout::Inputs {
+                    blend: false,
+                    textures: passes::textures(inputs),
+                });
             let backend = self.info.backend;
             let slot = compile::spawn(move || {
                 fill_validates(&source)
@@ -6329,7 +6348,7 @@ impl GpuRenderer {
                             apps,
                             &source,
                             "zgx_filter",
-                            AppLayout::Quads,
+                            app_layout,
                             |vertex, fragment| {
                                 fill_pipeline(&device, vertex, fragment, &layout, "zgx_filter")
                             },
@@ -6400,8 +6419,24 @@ impl GpuRenderer {
                 Some(shader) => (filter_source(shader.source()), "zgx_filter_blended"),
                 None => (blend_source(), "zgx_blended"),
             };
-            let layout = self.blend_layouts().1.clone();
+            let mut layout = self.blend_layouts().1.clone();
+            let mut source = source;
+            if let Some((shader, inputs)) =
+                shader.and_then(|shader| Some((shader, shader.inputs()?)))
+            {
+                let backdrop = self.blend_layouts().0.clone();
+                (layout, source) = self
+                    .chain(shader.id(), inputs)
+                    .blend_layout(shader, &backdrop);
+            }
             let device = self.device.clone();
+            let app_layout =
+                shader
+                    .and_then(|shader| shader.inputs())
+                    .map_or(AppLayout::Blend, |inputs| AppLayout::Inputs {
+                        blend: true,
+                        textures: passes::textures(inputs),
+                    });
             let backend = self.info.backend;
             let slot = compile::spawn(move || {
                 fill_validates(&source)
@@ -6412,7 +6447,7 @@ impl GpuRenderer {
                             apps,
                             &source,
                             entry,
-                            AppLayout::Blend,
+                            app_layout,
                             |vertex, fragment| {
                                 blend_pipeline(&device, vertex, fragment, &layout, entry)
                             },
@@ -7641,7 +7676,11 @@ impl GpuRenderer {
                     .then(|| scene.layer_shader(item.id))
                     .flatten()
                     .and_then(|layer| Some((layer.shader.clone()?, layer)))
-                    .filter(|(shader, _)| self.prepare_filter(shader));
+                    .filter(|(shader, _)| self.prepare_filter(shader))
+                    .filter(|(shader, layer)| {
+                        shader.inputs().is_none()
+                            || self.run_passes(scene, item.bounds, shader, layer)
+                    });
                 // And blended with its backdrop, once that compiles (or
                 // reading it, plainly over it).
                 let blend = item
@@ -10954,6 +10993,9 @@ impl GpuRenderer {
         pass.set_scissor_rect(x, y, w, h);
         pass.set_bind_group(0, self.source_bind(draw.source), &[]);
         pass.set_bind_group(2, bind, &[]);
+        if let Some(inputs) = self.inputs_of(draw.shading) {
+            pass.set_bind_group(passes::GROUP, inputs, &[]);
+        }
         pass.draw(0..4, draw.start..draw.end);
         stats.draw_calls += 1;
         stats.instances += (draw.end - draw.start) as usize;
@@ -11104,6 +11146,9 @@ impl GpuRenderer {
         if *current != Some(batch.shading) {
             pass.set_pipeline(pipelines(batch.shading));
             *current = Some(batch.shading);
+            if let Some(inputs) = self.inputs_of(batch.shading) {
+                pass.set_bind_group(passes::GROUP, inputs, &[]);
+            }
         }
         pass.set_scissor_rect(x, y, w, h);
         pass.set_bind_group(0, self.source_bind(batch.source), &[]);
@@ -13716,6 +13761,11 @@ impl GpuRenderer {
             self.idle = true;
         }
     }
+    /// How many effects (layer shaders with inputs) hold textures here.
+    #[doc(hidden)]
+    pub fn effect_chains(&self) -> usize {
+        self.chains.len()
+    }
     /// Drop the fill and layer shaders no one holds but this renderer (a
     /// removed node's, a reloaded script's: ids are never reused), with
     /// their pipelines, unless the kept frame still draws them.
@@ -13741,6 +13791,7 @@ impl GpuRenderer {
         self.fill_pipelines.retain(|id, _| fills.contains_key(id));
         self.filter_pipelines
             .retain(|id, _| filters.contains_key(id));
+        self.chains.retain(|id, _| filters.contains_key(id));
         self.blend_pipelines
             .retain(|id, _| *id == BLEND_PLAIN || filters.contains_key(id));
         #[cfg(target_os = "macos")]
@@ -14513,6 +14564,9 @@ var<private> zgx_painted:vec4<f32>;
 var<private> zgx_readable:vec4<f32>;
 var<private> zgx_origin:vec2<f32>;
 var<private> zgx_pixels:mat2x2<f32>;
+// Where logical `p` from the node's top-left is in its target, in points: the
+// window's own, for a node not inside another's layer.
+fn zgx_window(p:vec2<f32>)->vec2<f32> { return (zgx_origin+zgx_pixels*p)/viewport.z; }
 // The layer's straight-alpha pixel at logical `p` from the node's top-left.
 fn zgx_sample(p:vec2<f32>)->vec4<f32> {
  let uv=zgx_frame.xy+clamp(p,zgx_painted.xy,zgx_painted.zw)*zgx_frame.zw;
@@ -15758,6 +15812,11 @@ const DX12_FILL_CHECKED_WGPU_HAL: &str = "29.0.4";
 enum AppLayout {
     Quads,
     Blend,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Inputs {
+        blend: bool,
+        textures: u32,
+    },
 }
 /// Tests: end the session's FXC child, so the next app shader starts one.
 #[doc(hidden)]

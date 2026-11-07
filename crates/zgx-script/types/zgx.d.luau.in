@@ -819,6 +819,22 @@ declare extern type Bitmap with
 end
 declare extern type Shader with
 end
+export type ShaderPass = {
+	name: string,
+	shader: string,
+	size: { number }?,
+	scale: number?,
+	format: ("rgba8" | "rgba16float")?,
+	feedback: boolean?,
+	steps: number?,
+	once: boolean?,
+}
+export type LayerShaderOptions = {
+	fps: number?,
+	passes: { ShaderPass }?,
+	images: { [string]: Bitmap }?,
+	geometry: string?,
+}
 declare extern type LayerShader with
 end
 declare extern type Brush with
@@ -2282,6 +2298,7 @@ export type NodeProps = {
 	layer_bleed: number?,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: number?,
+	geometry: string?,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: boolean?,
 	-- The same for a `bg_shader`'s time.
@@ -3856,7 +3873,7 @@ declare ui: {
 	-- input.time, input.scale, input.params and input.radii (the box's corners);
 	-- `zgx_sample(p)` reads the layer at another point, and `zgx_backdrop(p)`
 	-- what lies behind the node there.
-	layer_shader: (source: string, opts: { fps: number? }?) -> LayerShader,
+	layer_shader: (source: string, opts: LayerShaderOptions?) -> LayerShader,
 	-- A box of glass: macOS 26's own where it can be, drawn elsewhere.
 	glass: (opts: GlassProps) -> Node,
 	-- Sorts `list` in place, stably, by a field of each item (`"price"`) or

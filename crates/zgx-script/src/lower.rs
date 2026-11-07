@@ -3899,6 +3899,10 @@ fn styled(
             s.layer_reach.unwrap_or(0.),
         )))
     });
+    // `geometry`, a literal: set once (few nodes have shaders at all).
+    if let Some(tag) = shaders.and_then(|s| s.geometry) {
+        view = geometry_of(view, tag);
+    }
     if !dynamic.is_empty()
         || element.is_some()
         || bg_image.is_some()
@@ -9418,4 +9422,10 @@ fn a_rows_identity_and_key_read_as_formatted() {
         assert!(!displays_as(&value, &text[..text.len() - 1]));
         assert!(!displays_as(&value, "x"));
     }
+}
+/// `geometry = "tag"`: its box read by shaders asking for the tag.
+#[cold]
+#[inline(never)]
+fn geometry_of(view: View, tag: u64) -> View {
+    view.geometry_tag(tag)
 }

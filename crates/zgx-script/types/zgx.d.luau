@@ -819,6 +819,22 @@ declare extern type Bitmap with
 end
 declare extern type Shader with
 end
+export type ShaderPass = {
+	name: string,
+	shader: string,
+	size: { number }?,
+	scale: number?,
+	format: ("rgba8" | "rgba16float")?,
+	feedback: boolean?,
+	steps: number?,
+	once: boolean?,
+}
+export type LayerShaderOptions = {
+	fps: number?,
+	passes: { ShaderPass }?,
+	images: { [string]: Bitmap }?,
+	geometry: string?,
+}
 declare extern type LayerShader with
 end
 declare extern type Brush with
@@ -2326,6 +2342,7 @@ export type NodeProps = {
 	layer_bleed: number?,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: number?,
+	geometry: string?,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: boolean?,
 	-- The same for a `bg_shader`'s time.
@@ -2732,6 +2749,7 @@ export type Props = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -3032,6 +3050,7 @@ export type Props_layer_shader = LayerShader?
 export type Props_layer_params = ({ read [number]: Color | { number } } | (() -> { read [number]: Color | { number } }))?
 export type Props_layer_bleed = number?
 export type Props_layer_reach = number?
+export type Props_geometry = string?
 export type Props_layer_clock = boolean?
 export type Props_shader_clock = boolean?
 export type Props_layer_on = Reactive<boolean>?
@@ -3381,6 +3400,7 @@ export type ContainerProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -3812,6 +3832,7 @@ export type ScrollProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -4249,6 +4270,7 @@ export type TextProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -4654,6 +4676,7 @@ export type MarkdownViewProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -5129,6 +5152,7 @@ export type RichProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -5528,6 +5552,7 @@ export type ImageProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -5944,6 +5969,7 @@ export type SvgProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -6448,6 +6474,7 @@ export type Scene3DProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -6870,6 +6897,7 @@ export type CanvasProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -7301,6 +7329,7 @@ export type CheckboxProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -7710,6 +7739,7 @@ export type InputProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -8220,6 +8250,7 @@ export type ProgressProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -8620,6 +8651,7 @@ export type SliderProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -9038,6 +9070,7 @@ export type SegmentedProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -9449,6 +9482,7 @@ export type StepperProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -9861,6 +9895,7 @@ export type DisclosureProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -10285,6 +10320,7 @@ export type AccordionProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -10682,6 +10718,7 @@ export type SectionProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -11105,6 +11142,7 @@ export type SeparatorProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -11510,6 +11548,7 @@ export type TabsProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -11937,6 +11976,7 @@ export type TreeProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -12360,6 +12400,7 @@ export type DataGridProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -12779,6 +12820,7 @@ export type CalendarProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -13191,6 +13233,7 @@ export type DatePickerProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -13601,6 +13644,7 @@ export type TimeFieldProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -14010,6 +14054,7 @@ export type ComboboxProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -14427,6 +14472,7 @@ export type CommandPaletteProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -14832,6 +14878,7 @@ export type SelectProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -15244,6 +15291,7 @@ export type SplitProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -15713,6 +15761,7 @@ export type ListProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -16207,6 +16256,7 @@ export type LayerProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -16627,6 +16677,7 @@ export type ModalProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -17065,6 +17116,7 @@ export type PopoverProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -17509,6 +17561,7 @@ export type MenuItemProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -17917,6 +17970,7 @@ export type SubmenuProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -18343,6 +18397,7 @@ export type WebViewProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -18768,6 +18823,7 @@ export type TerminalProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -19168,6 +19224,7 @@ export type SlotProps = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -19617,6 +19674,7 @@ export type EachOptions = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -20032,6 +20090,7 @@ export type PresenceOptions = {
 	layer_bleed: Props_layer_bleed,
 	-- How many points past the box and bleed its `zgx_backdrop(p)` reads.
 	layer_reach: Props_layer_reach,
+	geometry: Props_geometry,
 	-- The engine steps the layer shader's time on the frame clock while the node shows and it's not reduced motion: no script per step.
 	layer_clock: Props_layer_clock,
 	-- The same for a `bg_shader`'s time.
@@ -20553,7 +20612,7 @@ declare ui: {
 	-- input.time, input.scale, input.params and input.radii (the box's corners);
 	-- `zgx_sample(p)` reads the layer at another point, and `zgx_backdrop(p)`
 	-- what lies behind the node there.
-	layer_shader: (source: string, opts: { fps: number? }?) -> LayerShader,
+	layer_shader: (source: string, opts: LayerShaderOptions?) -> LayerShader,
 	-- A box of glass: macOS 26's own where it can be, drawn elsewhere.
 	glass: (opts: GlassProps) -> Node,
 	-- Sorts `list` in place, stably, by a field of each item (`"price"`) or

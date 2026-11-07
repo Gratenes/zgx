@@ -435,6 +435,8 @@ pub(crate) struct Shaders {
     pub layer_bleed: Option<f32>,
     /// `layer_reach`: how far past that its `zgx_backdrop` reads.
     pub layer_reach: Option<f32>,
+    /// `geometry`: its box reads as this tag's in shaders asking for it.
+    pub geometry: Option<u64>,
     /// `layer_clock`, `shader_clock`, `layer_on`, `layer_params` as a function:
     /// the engine keeps it up (boxed: few shaders are).
     pub drive: Option<DriveBox>,
@@ -515,6 +517,66 @@ pub(crate) struct DriveProps {
 pub(crate) struct LayerShaderUd(pub Arc<zgx::decoration::FillShader>);
 impl UserData for LayerShaderUd {}
 
+/// `ui.layer_shader`'s `passes`, `images` and `geometry`, if any.
+fn shader_inputs(opts: &Table) -> mlua::Result<Option<zgx::decoration::ShaderInputs>> {
+    use zgx::decoration::{PassFormat, PassSize, ShaderInputs, ShaderPass};
+    let wrong = |message: String| mlua::Error::runtime(format!("ui.layer_shader: {message}"));
+    let passes: Option<Table> = opts.get("passes")?;
+    let images: Option<Table> = opts.get("images")?;
+    let geometry: Option<String> = opts.get("geometry")?;
+    if passes.is_none() && images.is_none() && geometry.is_none() {
+        return Ok(None);
+    }
+    let mut inputs = ShaderInputs {
+        geometry: geometry.as_deref().map(zgx::decoration::geometry_tag),
+        ..Default::default()
+    };
+    for pass in passes
+        .iter()
+        .flat_map(|passes| passes.sequence_values::<Table>())
+    {
+        let pass = pass?;
+        let name: String = pass
+            .get::<Option<String>>("name")?
+            .ok_or_else(|| wrong("a pass needs a `name`".into()))?;
+        let source: String = pass
+            .get::<Option<String>>("shader")?
+            .ok_or_else(|| wrong(format!("pass `{name}` needs a `shader`")))?;
+        let size = match (
+            pass.get::<Option<Table>>("size")?,
+            pass.get::<Option<f32>>("scale")?,
+        ) {
+            (Some(size), _) => PassSize::Pixels(size.get(1)?, size.get(2)?),
+            (None, scale) => PassSize::OfBox(scale.unwrap_or(1.).clamp(0.01, 4.)),
+        };
+        let format = match pass.get::<Option<String>>("format")?.as_deref() {
+            None | Some("rgba8") => PassFormat::Rgba8,
+            Some("rgba16float") => PassFormat::Rgba16Float,
+            Some(other) => return Err(wrong(format!("no format `{other}`"))),
+        };
+        inputs.passes.push(ShaderPass {
+            name,
+            source,
+            size,
+            format,
+            feedback: pass.get::<Option<bool>>("feedback")?.unwrap_or(false),
+            steps: pass.get::<Option<u32>>("steps")?.unwrap_or(1).clamp(1, 128),
+            once: pass.get::<Option<bool>>("once")?.unwrap_or(false),
+        });
+    }
+    if let Some(images) = images {
+        for pair in images.pairs::<String, mlua::AnyUserData>() {
+            let (name, image) = pair?;
+            let image = image
+                .borrow::<BitmapUd>()
+                .map_err(|_| wrong(format!("image `{name}` isn't a ui.bitmap")))?
+                .0
+                .clone();
+            inputs.images.push((name, image));
+        }
+    }
+    Ok(Some(inputs))
+}
 /// `shader_params` and `layer_params`: up to four vec4s, lists of numbers
 /// or colors (0 to 1); theme colours (`"$accent"`) bind to `tokens`' slots
 /// where it has them.
@@ -3957,6 +4019,13 @@ fn fill_from(
                 let shaders = node.shaders.get_or_insert_default();
                 shaders.drive.get_or_insert_default().layer_on = Some(on);
             }
+            "geometry" => {
+                let mlua::Value::String(name) = &value else {
+                    return Err(mlua::Error::runtime("`geometry` takes a string"));
+                };
+                node.shaders.get_or_insert_default().geometry =
+                    Some(zgx::decoration::geometry_tag(&name.to_str()?));
+            }
             "layer_bleed" | "layer_reach" => {
                 let length = lua.unpack::<f32>(value)?;
                 let shaders = node.shaders.get_or_insert_default();
@@ -6154,6 +6223,14 @@ pub(crate) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(t) => t.get::<Option<f32>>("fps")?,
                 None => None,
             };
+            if let Some(inputs) = opts.as_ref().map(shader_inputs).transpose()?.flatten() {
+                // A running effect of its own: textures aren't shared.
+                zgx_gpu::check_layer_inputs(&source, &inputs)
+                    .map_err(|e| mlua::Error::runtime(format!("ui.layer_shader: {e}")))?;
+                let shader = zgx::decoration::FillShader::with_inputs(source, fps, inputs);
+                zgx::decoration::declare_layer_shader(&shader);
+                return Ok(LayerShaderUd(shader));
+            }
             // One shader per source and rate: rebuilding a view does not
             // compile it again.
             type Shaders =
