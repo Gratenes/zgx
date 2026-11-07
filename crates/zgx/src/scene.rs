@@ -6141,6 +6141,25 @@ impl Scene {
         if self.node(id).kind == kind {
             return;
         }
+        // Never laid out since it was appended (a mounting text taking its
+        // own size and colour): already marked to lay out and paint, and
+        // nothing of it drawn, so nothing to damage or invalidate again.
+        let node = self.node(id);
+        if node.measurement.is_none()
+            && node.bounds == Rect::default()
+            && node.queued
+            && node.dirty & (LAYOUT | PAINT) == LAYOUT | PAINT
+            && self.isolation_count + self.promoted_count == 0
+            && matches!(
+                (&node.kind, &kind),
+                (NodeKind::Text { .. }, NodeKind::Text { .. })
+            )
+        {
+            let node = self.node_mut(id);
+            node.kind = kind;
+            node.dirty |= CHANGED | PAINT_MIXED;
+            return;
+        }
         // Renderer caches are keyed by node and kind; only a different kind or
         // a replaced texture-backed resource can leave one stale. Text and
         // colour changes, which animate every frame, do not.
@@ -12594,6 +12613,52 @@ mod tests {
             color: Color(255, 255, 255, 255),
             font_size: 16.0,
         }
+    }
+    /// A text given its own size and colour before it is first laid out
+    /// (as a mounting text is styled) lays out at that size and paints, as it
+    /// would had it been appended so; and a text restyled once laid out still
+    /// lays out and repaints.
+    #[test]
+    fn a_text_restyled_before_its_first_layout_lays_out_as_restyled() {
+        let mut scene = Scene::new(300., 100.);
+        // Its width the size times its characters.
+        scene.set_font_text_measurer(|text, size, _, _| (text.chars().count() as f32 * size, size));
+        let restyled = scene.append(scene.root(), text("hello"), Style::default());
+        let fresh = scene.append(scene.root(), text("hello"), Style::default());
+        let big = |color| NodeKind::Text {
+            text: "hello".into(),
+            color,
+            font_size: 30.0,
+        };
+        scene.set_kind(restyled, big(Color(1, 2, 3, 255)));
+        let mut other = Scene::new(300., 100.);
+        other.set_font_text_measurer(|text, size, _, _| (text.chars().count() as f32 * size, size));
+        let appended = other.append(other.root(), big(Color(1, 2, 3, 255)), Style::default());
+        let report = scene.flush();
+        other.flush();
+        assert_eq!(scene.bounds(restyled).width, other.bounds(appended).width);
+        assert_eq!(scene.bounds(restyled).width, 150.);
+        assert_eq!(scene.bounds(fresh).width, 80.);
+        assert!(
+            report
+                .damage
+                .iter()
+                .any(|d| d.intersects(scene.bounds(restyled))),
+            "painted where it lands"
+        );
+        // Laid out: a new size lays it out again, and repaints it.
+        scene.set_kind(
+            restyled,
+            NodeKind::Text {
+                text: "hello".into(),
+                color: Color(4, 5, 6, 255),
+                font_size: 10.0,
+            },
+        );
+        let report = scene.flush();
+        assert_eq!(scene.bounds(restyled).width, 50.);
+        assert!(report.layout_nodes > 0);
+        assert!(!report.damage.is_empty());
     }
     /// A text's proof that it holds no right-to-left script goes with its
     /// text: changed to Hebrew, its ink is its whole box again.
