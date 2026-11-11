@@ -191,6 +191,158 @@ fn alone(c: char) -> bool {
     c >= 0x2190 && matches!(c, ..0x2500 | 0x25a0..0x2800 | 0x2e80..)
 }
 
+/// A block element (U+2580–U+259F) as the parts of its cell it fills:
+/// `(left, top, right, bottom)` in eighths of the cell, and how much of the
+/// ink it takes (a shade's quarter, half or three quarters).
+fn block(c: char) -> Option<(&'static [(u8, u8, u8, u8)], f32)> {
+    const UL: (u8, u8, u8, u8) = (0, 0, 4, 4);
+    const UR: (u8, u8, u8, u8) = (4, 0, 8, 4);
+    const LL: (u8, u8, u8, u8) = (0, 4, 4, 8);
+    const LR: (u8, u8, u8, u8) = (4, 4, 8, 8);
+    const FULL: &[(u8, u8, u8, u8)] = &[(0, 0, 8, 8)];
+    Some(match c {
+        '\u{2580}' => (&[(0, 0, 8, 4)], 1.),
+        '\u{2581}' => (&[(0, 7, 8, 8)], 1.),
+        '\u{2582}' => (&[(0, 6, 8, 8)], 1.),
+        '\u{2583}' => (&[(0, 5, 8, 8)], 1.),
+        '\u{2584}' => (&[(0, 4, 8, 8)], 1.),
+        '\u{2585}' => (&[(0, 3, 8, 8)], 1.),
+        '\u{2586}' => (&[(0, 2, 8, 8)], 1.),
+        '\u{2587}' => (&[(0, 1, 8, 8)], 1.),
+        '\u{2588}' => (FULL, 1.),
+        '\u{2589}' => (&[(0, 0, 7, 8)], 1.),
+        '\u{258a}' => (&[(0, 0, 6, 8)], 1.),
+        '\u{258b}' => (&[(0, 0, 5, 8)], 1.),
+        '\u{258c}' => (&[(0, 0, 4, 8)], 1.),
+        '\u{258d}' => (&[(0, 0, 3, 8)], 1.),
+        '\u{258e}' => (&[(0, 0, 2, 8)], 1.),
+        '\u{258f}' => (&[(0, 0, 1, 8)], 1.),
+        '\u{2590}' => (&[(4, 0, 8, 8)], 1.),
+        '\u{2591}' => (FULL, 0.25),
+        '\u{2592}' => (FULL, 0.5),
+        '\u{2593}' => (FULL, 0.75),
+        '\u{2594}' => (&[(0, 0, 8, 1)], 1.),
+        '\u{2595}' => (&[(7, 0, 8, 8)], 1.),
+        '\u{2596}' => (&[LL], 1.),
+        '\u{2597}' => (&[LR], 1.),
+        '\u{2598}' => (&[UL], 1.),
+        '\u{2599}' => (&[UL, LL, LR], 1.),
+        '\u{259a}' => (&[UL, LR], 1.),
+        '\u{259b}' => (&[UL, UR, LL], 1.),
+        '\u{259c}' => (&[UL, UR, LR], 1.),
+        '\u{259d}' => (&[UR], 1.),
+        '\u{259e}' => (&[UR, LL], 1.),
+        '\u{259f}' => (&[UR, LL, LR], 1.),
+        _ => return None,
+    })
+}
+
+/// A box-drawing character (U+2500–U+257F) as its four arms from the
+/// cell's middle, `[up, right, down, left]`: 0 none, 1 light, 2 heavy,
+/// 3 double. Dashed lines are drawn solid; arcs as corners; a mixed
+/// crossing as a light one.
+fn arms(c: char) -> Option<[u8; 4]> {
+    let c = c as u32;
+    if !(0x2500..0x2580).contains(&c) {
+        return None;
+    }
+    const TABLE: [[u8; 4]; 128] = [
+        // 2500
+        [0, 1, 0, 1], [0, 2, 0, 2], [1, 0, 1, 0], [2, 0, 2, 0],
+        [0, 1, 0, 1], [0, 2, 0, 2], [1, 0, 1, 0], [2, 0, 2, 0],
+        [0, 1, 0, 1], [0, 2, 0, 2], [1, 0, 1, 0], [2, 0, 2, 0],
+        [0, 1, 1, 0], [0, 2, 1, 0], [0, 1, 2, 0], [0, 2, 2, 0],
+        // 2510
+        [0, 0, 1, 1], [0, 0, 1, 2], [0, 0, 2, 1], [0, 0, 2, 2],
+        [1, 1, 0, 0], [1, 2, 0, 0], [2, 1, 0, 0], [2, 2, 0, 0],
+        [1, 0, 0, 1], [1, 0, 0, 2], [2, 0, 0, 1], [2, 0, 0, 2],
+        [1, 1, 1, 0], [1, 2, 1, 0], [2, 1, 1, 0], [1, 1, 2, 0],
+        // 2520
+        [2, 1, 2, 0], [2, 2, 1, 0], [1, 2, 2, 0], [2, 2, 2, 0],
+        [1, 0, 1, 1], [1, 0, 1, 2], [2, 0, 1, 1], [1, 0, 2, 1],
+        [2, 0, 2, 1], [2, 0, 1, 2], [1, 0, 2, 2], [2, 0, 2, 2],
+        [0, 1, 1, 1], [0, 1, 1, 2], [0, 2, 1, 1], [0, 2, 1, 2],
+        // 2530
+        [0, 1, 2, 1], [0, 1, 2, 2], [0, 2, 2, 1], [0, 2, 2, 2],
+        [1, 1, 0, 1], [1, 1, 0, 2], [1, 2, 0, 1], [1, 2, 0, 2],
+        [2, 1, 0, 1], [2, 1, 0, 2], [2, 2, 0, 1], [2, 2, 0, 2],
+        [1, 1, 1, 1], [1, 1, 1, 2], [1, 2, 1, 1], [1, 2, 1, 2],
+        // 2540
+        [2, 1, 1, 1], [1, 1, 2, 1], [2, 1, 2, 1], [2, 1, 1, 2],
+        [2, 2, 1, 1], [1, 1, 2, 2], [1, 2, 2, 1], [2, 2, 1, 2],
+        [1, 2, 2, 2], [2, 2, 2, 1], [2, 1, 2, 2], [2, 2, 2, 2],
+        [0, 1, 0, 1], [0, 2, 0, 2], [1, 0, 1, 0], [2, 0, 2, 0],
+        // 2550
+        [0, 3, 0, 3], [3, 0, 3, 0], [0, 3, 1, 0], [0, 1, 3, 0],
+        [0, 3, 3, 0], [0, 0, 1, 3], [0, 0, 3, 1], [0, 0, 3, 3],
+        [1, 3, 0, 0], [3, 1, 0, 0], [3, 3, 0, 0], [1, 0, 0, 3],
+        [3, 0, 0, 1], [3, 0, 0, 3], [1, 3, 1, 0], [3, 1, 3, 0],
+        // 2560
+        [3, 3, 3, 0], [1, 0, 1, 3], [3, 0, 3, 1], [3, 0, 3, 3],
+        [0, 3, 1, 3], [0, 1, 3, 1], [0, 3, 3, 3], [1, 3, 0, 3],
+        [3, 1, 0, 1], [3, 3, 0, 3], [1, 3, 1, 3], [3, 1, 3, 1],
+        [3, 3, 3, 3], [0, 1, 1, 0], [0, 0, 1, 1], [1, 0, 0, 1],
+        // 2570
+        [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0],
+        [0, 0, 0, 1], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0],
+        [0, 0, 0, 2], [2, 0, 0, 0], [0, 2, 0, 0], [0, 0, 2, 0],
+        [0, 2, 0, 1], [1, 0, 2, 0], [0, 1, 0, 2], [2, 0, 1, 0],
+    ];
+    let arms = TABLE[(c - 0x2500) as usize];
+    // (The diagonals, 2571–2573, are left to the font.)
+    (arms != [0; 4]).then_some(arms)
+}
+
+/// A block element or box-drawing line at `x` as rectangles filling its
+/// cell to the edges, so neighbours meet (the font's glyphs stop short of
+/// the line height, and leave a gap between rows).
+fn shapes(c: char, x: f32, width: f32, height: f32, ink: Color) -> Option<Vec<Fill>> {
+    let rect = |x: f32, y: f32, w: f32, h: f32, color: Color| Fill { x, y, width: w, height: h, color };
+    if let Some((parts, share)) = block(c) {
+        let color = Color(ink.0, ink.1, ink.2, (f32::from(ink.3) * share).round() as u8);
+        let (ex, ey) = (width / 8., height / 8.);
+        return Some(
+            parts
+                .iter()
+                .map(|&(l, t, r, b)| rect(x + f32::from(l) * ex, f32::from(t) * ey, f32::from(r - l) * ex, f32::from(b - t) * ey, color))
+                .collect(),
+        );
+    }
+    let [up, right, down, left] = arms(c)?;
+    let light = (width / 8.).round().max(1.);
+    let thick = |weight: u8| if weight == 2 { light * 2. } else { light };
+    let (cx, cy) = ((x + width / 2. - light / 2.).round() + light / 2., (height / 2. - light / 2.).round() + light / 2.);
+    // Each arm runs from the cell's edge past its middle, as far as the
+    // widest arm across it reaches, so a corner or a tee closes.
+    let half = |weight: u8| match weight {
+        0 => 0.,
+        3 => light * 1.5,
+        weight => thick(weight) / 2.,
+    };
+    let across_v = half(left).max(half(right));
+    let across_h = half(up).max(half(down));
+    // A double arm: two light lines a line apart.
+    let lanes = |weight: u8| -> &'static [f32] { if weight == 3 { &[-1., 1.] } else { &[0.] } };
+    let mut out = Vec::new();
+    for (weight, y0, y1) in [(up, 0., cy + across_v), (down, cy - across_v, height)] {
+        if weight > 0 {
+            let t = thick(weight);
+            for lane in lanes(weight) {
+                out.push(rect(cx + lane * light - t / 2., y0, t, y1 - y0, ink));
+            }
+        }
+    }
+    for (weight, x0, x1) in [(left, x, cx + across_h), (right, cx - across_h, x + width)] {
+        if weight > 0 {
+            let t = thick(weight);
+            for lane in lanes(weight) {
+                out.push(rect(x0, cy + lane * light - t / 2., x1 - x0, t, ink));
+            }
+        }
+    }
+    Some(out)
+}
+
 /// The row at viewport `row` (0 at the top of what shows).
 pub(crate) fn row(
     term: &Term,
@@ -453,6 +605,14 @@ fn row_built<L, const STYLED: bool, const RUNS: bool>(
                     }
                     _ => finish(&mut run, &mut open, &mut blanks, &mut paint.runs),
                 }
+                break 'cell;
+            }
+            // Blocks and box lines: drawn to the cell, not from the font.
+            if !blank
+                && let Some(parts) = shapes(c, column as f32 * width, width, height, ink)
+            {
+                finish(&mut run, &mut open, &mut blanks, &mut paint.runs);
+                paint.lines.extend(parts);
                 break 'cell;
             }
             let wide = flags.contains(Flags::WIDE_CHAR);
