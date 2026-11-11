@@ -470,7 +470,7 @@ mod imp {
         Foundation::TypedEventHandler,
         UI::Notifications::{NotificationSetting, ToastNotification, ToastNotificationManager},
         Win32::{
-            Foundation::HWND,
+            Foundation::{HWND, LPARAM, LRESULT, WPARAM},
             Graphics::Gdi::{
                 BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection,
                 DIB_RGB_COLORS, DeleteObject, HBITMAP,
@@ -484,11 +484,18 @@ mod imp {
                 WinRT::{RO_INIT_MULTITHREADED, RoInitialize},
             },
             UI::{
-                Shell::{ITaskbarList3, SetCurrentProcessExplicitAppUserModelID, TaskbarList},
-                WindowsAndMessaging::{CreateIconIndirect, DestroyIcon, HICON, ICONINFO},
+                HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
+                Shell::{
+                    DefSubclassProc, ITaskbarList3, RemoveWindowSubclass,
+                    SetCurrentProcessExplicitAppUserModelID, SetWindowSubclass, TaskbarList,
+                },
+                WindowsAndMessaging::{
+                    CreateIconIndirect, DestroyIcon, HICON, ICONINFO, IsWindowVisible,
+                    RegisterWindowMessageW, SM_CXSMICON, WM_DPICHANGED, WM_NCDESTROY,
+                },
             },
         },
-        core::{HSTRING, IInspectable, PCWSTR},
+        core::{HSTRING, IInspectable, PCWSTR, w},
     };
 
     /// Settled later with what `work`, run on a thread of its own, returns.
@@ -626,78 +633,19 @@ mod imp {
         })
     }
 
-    /// A tiny font for the badge's count: 3 by 5 pixels a glyph, rows from
-    /// the top, 4 the leftmost column.
-    const GLYPHS: [[u8; 5]; 11] = [
-        [7, 5, 5, 5, 7], // 0
-        [2, 6, 2, 2, 7], // 1
-        [7, 1, 7, 4, 7], // 2
-        [7, 1, 7, 1, 7], // 3
-        [5, 5, 7, 1, 1], // 4
-        [7, 4, 7, 1, 7], // 5
-        [7, 4, 7, 5, 7], // 6
-        [7, 1, 1, 1, 1], // 7
-        [7, 5, 7, 5, 7], // 8
-        [7, 5, 7, 1, 7], // 9
-        [0, 2, 7, 2, 0], // +
-    ];
+    /// The badge's colours (`badge_art`): the accent pill, its count in white.
+    const BADGE_STYLE: crate::badge_art::Style = crate::badge_art::Style::DEFAULT;
 
-    /// The badge drawn, 16 by 16 premultiplied BGRA: a red disc and the
-    /// count in white (two digits at most, "9+" past them), a plain disc
-    /// for text that is no count.
-    fn badge_pixels(badge: &str) -> Vec<u32> {
-        const SIZE: usize = 16;
-        let mut pixels = vec![0u32; SIZE * SIZE];
-        for y in 0..SIZE {
-            for x in 0..SIZE {
-                let (dx, dy) = (x as f32 + 0.5 - 8., y as f32 + 0.5 - 8.);
-                let coverage = (8. - (dx * dx + dy * dy).sqrt()).clamp(0., 1.);
-                let a = (coverage * 255.) as u32;
-                // #D93025, premultiplied.
-                let (r, g, b) = (0xD9 * a / 255, 0x30 * a / 255, 0x25 * a / 255);
-                pixels[y * SIZE + x] = (a << 24) | (r << 16) | (g << 8) | b;
-            }
-        }
-        let text: Vec<usize> = match count_of(badge) {
-            Some(n) if n < 10 => vec![n as usize],
-            Some(n) if n < 100 => vec![(n / 10) as usize, (n % 10) as usize],
-            Some(_) => vec![9, 10],
-            None => vec![],
-        };
-        // Glyphs at twice their size, a pixel apart, centred.
-        let scale = 2;
-        let width = text.len() * 3 * scale + text.len().saturating_sub(1);
-        let (left, top) = ((SIZE - width.min(SIZE)) / 2, (SIZE - 5 * scale) / 2);
-        for (i, glyph) in text.iter().enumerate() {
-            let at = left + i * (3 * scale + 1);
-            for (row, bits) in GLYPHS[*glyph].iter().enumerate() {
-                for col in 0..3 {
-                    if bits & (4 >> col) == 0 {
-                        continue;
-                    }
-                    for sy in 0..scale {
-                        for sx in 0..scale {
-                            let (x, y) = (at + col * scale + sx, top + row * scale + sy);
-                            if x < SIZE && y < SIZE {
-                                pixels[y * SIZE + x] = 0xFFFF_FFFF;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        pixels
-    }
-
-    /// The badge as an icon, its alpha its own.
-    fn badge_icon(badge: &str) -> Option<HICON> {
-        let pixels = badge_pixels(badge);
+    /// The badge as an icon of `size` pixels square, its alpha its own.
+    fn badge_icon(badge: &str, size: u32) -> Option<HICON> {
+        let pixels = crate::badge_art::pixels(badge, size, BADGE_STYLE);
+        let side = size as i32;
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: 16,
+                biWidth: side,
                 // Negative: rows from the top.
-                biHeight: -16,
+                biHeight: -side,
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0,
@@ -706,15 +654,17 @@ mod imp {
             ..Default::default()
         };
         let mut bits = std::ptr::null_mut();
-        // SAFETY: a 16 by 16 32-bit DIB; `bits` receives its pixel memory,
-        // filled with as many pixels below; both bitmaps are deleted once
-        // the icon has copied them.
+        // SAFETY: a `size` by `size` 32-bit DIB; `bits` receives its pixel
+        // memory, filled with as many pixels below; both bitmaps are deleted
+        // once the icon has copied them.
         unsafe {
             let color: HBITMAP =
                 CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
             std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits.cast::<u32>(), pixels.len());
-            let mask = [0u8; 32];
-            let mask = CreateBitmap(16, 16, 1, 1, Some(mask.as_ptr().cast()));
+            // (A monochrome mask, its rows whole words; the icon's alpha is
+            // in the colour bitmap, so it is all zeros.)
+            let mask = vec![0u8; ((size as usize).div_ceil(16) * 2) * size as usize];
+            let mask = CreateBitmap(side, side, 1, 1, Some(mask.as_ptr().cast()));
             let icon = CreateIconIndirect(&ICONINFO {
                 fIcon: true.into(),
                 xHotspot: 0,
@@ -728,10 +678,137 @@ mod imp {
         }
     }
 
+    /// The taskbar's overlay is a small icon, and a small icon is 16 pixels at
+    /// 96 dpi, 20 at 120, 24 at 144, 32 at 192: the system's own sizes, for
+    /// the window's monitor.
+    fn overlay_size(hwnd: HWND) -> u32 {
+        // SAFETY: a live window's handle, on its thread.
+        let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForWindow(hwnd)) };
+        if size >= 8 { size as u32 } else { 16 }
+    }
+
+    /// What the taskbar is told, and of whom. All on the UI thread.
+    #[derive(Default)]
+    struct Taskbar {
+        /// The taskbar, made once the window's button is there.
+        list: Option<ITaskbarList3>,
+        /// The window whose button carries the badge, and `badge_proc` hears
+        /// the system say of.
+        window: Option<isize>,
+        /// Its button exists: `TaskbarButtonCreated` came (or the window
+        /// showed before we listened for it). `ITaskbarList3` is not to be
+        /// used before that, and is made anew with each new button
+        /// (Explorer restarting makes them all anew).
+        ready: bool,
+        /// What was last told, told again at another DPI and to a new button.
+        badge: Option<String>,
+    }
+
     thread_local! {
-        /// The taskbar, made the first time a badge is set.
-        static TASKBAR: std::cell::RefCell<Option<ITaskbarList3>> =
-            const { std::cell::RefCell::new(None) };
+        static TASKBAR: std::cell::RefCell<Taskbar> = std::cell::RefCell::new(Taskbar::default());
+    }
+
+    const SUBCLASS_ID: usize = 0x7a67_6264; // "zgbd"
+
+    /// The message the taskbar sends a window when its button is made.
+    fn button_created() -> u32 {
+        static MESSAGE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        // SAFETY: a constant wide string.
+        *MESSAGE.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarButtonCreated")) })
+    }
+
+    /// `hwnd`'s overlay set to the badge as it stands, the taskbar made first
+    /// if it hasn't been. Whether the system took it. (No borrow of the
+    /// state is held across the calls: they pump messages, and `badge_proc`
+    /// hears them.)
+    fn apply(hwnd: HWND) -> bool {
+        let (ready, badge, list) =
+            TASKBAR.with_borrow(|t| (t.ready, t.badge.clone(), t.list.clone()));
+        if !ready {
+            return false;
+        }
+        let list = match list {
+            Some(list) => list,
+            None => {
+                // SAFETY: COM is initialized on the UI thread (winit's OLE).
+                let made = unsafe {
+                    CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
+                }
+                .ok()
+                // SAFETY: the taskbar list just made.
+                .filter(|list| unsafe { list.HrInit() }.is_ok());
+                let Some(list) = made else { return false };
+                TASKBAR.with_borrow_mut(|t| t.list = Some(list.clone()));
+                list
+            }
+        };
+        match badge {
+            None => {
+                // The description reset first, as its own call: with the
+                // icon taken off by a null one alone, the taskbar button
+                // went on telling UI Automation the last count.
+                let reset = HSTRING::new();
+                // SAFETY: the window's handle, live while it is.
+                unsafe {
+                    let _ = list.SetOverlayIcon(hwnd, HICON::default(), &reset);
+                    list.SetOverlayIcon(hwnd, HICON::default(), PCWSTR::null())
+                }
+                .is_ok()
+            }
+            Some(badge) => {
+                let Some(icon) = badge_icon(&badge, overlay_size(hwnd)) else {
+                    return false;
+                };
+                // What a screen reader says of the taskbar button.
+                let description = HSTRING::from(match count_of(&badge) {
+                    Some(n) => format!("{n} unread"),
+                    None => badge.clone(),
+                });
+                // SAFETY: as above; the taskbar copies the icon, then it is
+                // destroyed.
+                let set = unsafe { list.SetOverlayIcon(hwnd, icon, &description) }.is_ok();
+                // SAFETY: the icon made above, no longer used.
+                let _ = unsafe { DestroyIcon(icon) };
+                set
+            }
+        }
+    }
+
+    /// Hears the window's taskbar button made (again: Explorer restarted) and
+    /// its DPI change, and tells the taskbar the badge again, at its size.
+    ///
+    /// # Safety
+    ///
+    /// Called by comctl32 alone, as the subclass `set_badge` installs.
+    unsafe extern "system" fn badge_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        if message == button_created() {
+            // A new button: a new taskbar for it.
+            TASKBAR.with_borrow_mut(|t| {
+                t.ready = true;
+                t.list = None;
+            });
+            apply(hwnd);
+        } else if message == WM_NCDESTROY {
+            TASKBAR.with_borrow_mut(|t| *t = Taskbar::default());
+            // SAFETY: removes this subclass.
+            unsafe {
+                let _ = RemoveWindowSubclass(hwnd, Some(badge_proc), SUBCLASS_ID);
+            }
+        }
+        // SAFETY: the next procedure in the window's chain.
+        let result = unsafe { DefSubclassProc(hwnd, message, wparam, lparam) };
+        if message == WM_DPICHANGED {
+            // (After the window has its new DPI: a badge of that size.)
+            apply(hwnd);
+        }
+        result
     }
 
     pub(crate) fn set_badge(badge: Option<&str>, window: Option<&winit::window::Window>) -> bool {
@@ -742,50 +819,27 @@ mod imp {
             return false;
         };
         let hwnd = HWND(handle.hwnd.get() as *mut _);
-        TASKBAR.with_borrow_mut(|taskbar| {
-            if taskbar.is_none() {
-                // SAFETY: COM is initialized on the UI thread (winit's OLE).
-                *taskbar = unsafe {
-                    CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
-                }
-                .ok()
-                // SAFETY: the taskbar list just made.
-                .filter(|list| unsafe { list.HrInit() }.is_ok());
+        let first = TASKBAR.with_borrow_mut(|t| {
+            t.badge = badge.map(str::to_owned);
+            let first = t.window != Some(hwnd.0 as isize);
+            if first {
+                t.window = Some(hwnd.0 as isize);
+                t.list = None;
+                // A window already showing has had its button made, and its
+                // message with it, before there was a subclass to hear it.
+                // SAFETY: a live window's handle.
+                t.ready = unsafe { IsWindowVisible(hwnd) }.as_bool();
             }
-            let Some(list) = taskbar.as_ref() else {
-                return false;
-            };
-            match badge {
-                None => {
-                    // The description reset first, as its own call: with the
-                    // icon taken off by a null one alone, the taskbar button
-                    // went on telling UI Automation the last count.
-                    let reset = HSTRING::new();
-                    // SAFETY: the window's handle, live while `window` is.
-                    unsafe {
-                        let _ = list.SetOverlayIcon(hwnd, HICON::default(), &reset);
-                        list.SetOverlayIcon(hwnd, HICON::default(), PCWSTR::null())
-                    }
-                    .is_ok()
-                }
-                Some(badge) => {
-                    let Some(icon) = badge_icon(badge) else {
-                        return false;
-                    };
-                    // What a screen reader says of the taskbar button.
-                    let description = HSTRING::from(match count_of(badge) {
-                        Some(n) => format!("{n} unread"),
-                        None => badge.to_string(),
-                    });
-                    // SAFETY: as above; the taskbar copies the icon, then it
-                    // is destroyed.
-                    let set = unsafe { list.SetOverlayIcon(hwnd, icon, &description) }.is_ok();
-                    // SAFETY: the icon made above, no longer used.
-                    let _ = unsafe { DestroyIcon(icon) };
-                    set
-                }
+            first
+        });
+        if first {
+            // SAFETY: a subclass of our own window on its thread; removed as
+            // the window goes.
+            unsafe {
+                let _ = SetWindowSubclass(hwnd, Some(badge_proc), SUBCLASS_ID, 0);
             }
-        })
+        }
+        apply(hwnd)
     }
 }
 
