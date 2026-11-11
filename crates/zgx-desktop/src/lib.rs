@@ -73,6 +73,8 @@ mod mimalloc_tag_tests {
 pub mod app_menu;
 #[cfg(feature = "audio")]
 mod audio;
+#[cfg(any(windows, test))]
+mod badge_art;
 mod clipboard;
 mod composition;
 mod contain;
