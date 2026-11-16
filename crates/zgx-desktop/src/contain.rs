@@ -196,6 +196,44 @@ pub(crate) fn banner(issues: &WindowIssues, debug: bool) -> Vec<String> {
         .collect()
 }
 
+/// How long a contained panic's banner stays before it clears itself, and
+/// the window in which a second one makes it stay until dismissed.
+pub(crate) const BANNER_FOR: Duration = Duration::from_secs(10);
+
+/// What a banner does with the error it is told of (`BannerClock::error`).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BannerHold {
+    /// A lone failure: the banner clears itself after `BANNER_FOR`.
+    Clears,
+    /// Failures that keep coming (one while the last still showed, inside
+    /// `BANNER_FOR`): it stays until it is dismissed.
+    Stays,
+}
+
+/// When a window's banner last heard of an error, to tell a lone failure
+/// (cleared after `BANNER_FOR`) from repeated ones (kept until dismissed).
+#[derive(Debug, Default)]
+pub(crate) struct BannerClock {
+    last: Option<Instant>,
+}
+
+impl BannerClock {
+    /// An error at `now`, with the banner still `showing` (not dismissed or
+    /// cleared) or not.
+    pub(crate) fn error(&mut self, now: Instant, showing: bool) -> BannerHold {
+        let repeat = showing
+            && self
+                .last
+                .is_some_and(|last| now.saturating_duration_since(last) < BANNER_FOR);
+        self.last = Some(now);
+        if repeat {
+            BannerHold::Stays
+        } else {
+            BannerHold::Clears
+        }
+    }
+}
+
 /// Debug builds: whether `ZGX_PANIC_IN` names `what` (`"a popup's frame"`,
 /// `"the window's frame"`, `"the popups' update"`), which then panics each
 /// time it runs: what `scripts/popup_windows_smoke.py` contains.
@@ -411,5 +449,33 @@ mod tests {
             );
         }
         assert_eq!(*reported.borrow(), ["first", "second"]);
+    }
+
+    /// A lone failure's banner clears itself; a second while the first
+    /// still shows, inside the window, keeps it until it is dismissed.
+    #[test]
+    fn a_lone_failure_clears_and_a_repeat_stays() {
+        let start = Instant::now();
+        let mut clock = BannerClock::default();
+        assert_eq!(clock.error(start, false), BannerHold::Clears);
+        let soon = start + Duration::from_secs(3);
+        assert_eq!(clock.error(soon, true), BannerHold::Stays);
+        // The repeat counts from its own time: another inside the window of
+        // that one stays too.
+        let later = soon + Duration::from_secs(9);
+        assert_eq!(clock.error(later, true), BannerHold::Stays);
+    }
+
+    /// An error after the banner was dismissed, or after the window passed,
+    /// is a lone one again.
+    #[test]
+    fn a_dismissed_or_old_banner_starts_over() {
+        let start = Instant::now();
+        let mut clock = BannerClock::default();
+        assert_eq!(clock.error(start, false), BannerHold::Clears);
+        let soon = start + Duration::from_secs(2);
+        assert_eq!(clock.error(soon, false), BannerHold::Clears, "dismissed");
+        let after = soon + BANNER_FOR;
+        assert_eq!(clock.error(after, true), BannerHold::Clears, "a window on");
     }
 }
