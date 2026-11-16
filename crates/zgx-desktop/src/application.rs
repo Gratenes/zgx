@@ -1923,6 +1923,11 @@ struct Host {
     renderer_retry: Option<std::time::Instant>,
     /// The banner saying something failed (`show_error`), once one has.
     error_banner: Option<(Signal<String>, zgx::compose::ViewHandle)>,
+    /// When the banner last heard of an error (`contain::BannerClock`).
+    banner_clock: crate::contain::BannerClock,
+    /// The wait that clears a lone failure's banner; dropped (cancelled) when
+    /// the failures repeat.
+    banner_clear: Option<crate::ScopedTask>,
     /// The window's frame's and the popup host's last contained panics,
     /// and the damaged frames tried (`contain::run`).
     render_fault: Option<crate::contain::Fault>,
@@ -2415,6 +2420,8 @@ impl Host {
             gpu_refused: false,
             renderer_retry: None,
             error_banner: None,
+            banner_clock: Default::default(),
+            banner_clear: None,
             render_fault: None,
             popups_fault: None,
             _layout_issues: layout_issues,
@@ -4254,11 +4261,19 @@ impl Host {
     /// click dismisses; a later failure replaces its text.
     fn show_error(&mut self, message: &str) {
         let text = format!("Something went wrong: {message}");
+        let showing = self
+            .error_banner
+            .as_ref()
+            .is_some_and(|(shown, _)| shown.with_untracked(|text| !text.is_empty()));
+        let hold = self
+            .banner_clock
+            .error(std::time::Instant::now(), showing);
         if let Some((shown, _)) = &self.error_banner {
             shown.set(text);
         } else {
             let shown = self.context.ui.signal(text);
-            let (read, hide, hidden) = (shown.clone(), shown.clone(), shown.clone());
+            let (read, hide, hidden, close) =
+                (shown.clone(), shown.clone(), shown.clone(), shown.clone());
             use zgx::{
                 compose::div,
                 style::{Styled, Styles},
@@ -4270,6 +4285,7 @@ impl Host {
                     .left(8.)
                     .right(8.)
                     .p(10.)
+                    .pr(32.)
                     .rounded(8.)
                     .bg(zgx::style::rgb(0x6b2222))
                     .text_color(zgx::style::rgb(0xffffff))
@@ -4285,10 +4301,35 @@ impl Host {
                     .on_click(move || {
                         hide.set(String::new());
                     })
-                    .child(zgx::compose::text_signal(move || read.get())),
+                    .child(zgx::compose::text_signal(move || read.get()))
+                    .child(
+                        div()
+                            .absolute()
+                            .top(4.)
+                            .right(8.)
+                            .px(6.)
+                            .role(zgx::semantics::Role::Button)
+                            .accessible_label("Dismiss")
+                            .on_click(move || {
+                                close.set(String::new());
+                            })
+                            .child(zgx::compose::text("\u{00d7}")),
+                    ),
             );
             self.error_banner = Some((shown, view));
         }
+        // A lone failure clears itself; failures that keep coming stay until
+        // dismissed (the earlier wait is cancelled).
+        self.banner_clear = match (hold, &self.error_banner) {
+            (crate::contain::BannerHold::Clears, Some((shown, _))) => {
+                let clear = shown.clone();
+                Some(self.context.tasks.spawn_scoped(async move {
+                    zgx::timer::sleep(crate::contain::BANNER_FOR).await;
+                    clear.set(String::new());
+                }))
+            }
+            _ => None,
+        };
         if let Some(window) = &self.window {
             window.request_redraw();
         }
