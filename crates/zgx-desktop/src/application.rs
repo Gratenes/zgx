@@ -9098,7 +9098,10 @@ impl WindowManager {
             self.fail(event_loop, format!("panicking repeatedly: {message}"));
             return;
         }
-        eprintln!("zgx: contained a panic ({message}); the app keeps running");
+        eprintln!(
+            "zgx: contained a panic at {} ({message}); the app keeps running",
+            crate::contain::utc_now()
+        );
         for (key, host) in self.hosts.iter_mut() {
             if token.is_none_or(|token| token == *key) {
                 host.show_error(&message);
